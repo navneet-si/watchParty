@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Sync",
+  "description": "Syncs YouTube video playback with a socket server",
+  "version": "1.0",
+  "icons": {},
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*" 
+  ],
+  "content_scripts": [
+    {
+      "js": ["sidebar.js","content.js"],
+      "matches": [
+        "https://*.youtube.com/*"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "index.html"
+  }
+}
