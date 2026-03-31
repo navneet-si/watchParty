@@ -18,9 +18,11 @@
   ],
   "content_scripts": [
     {
-      "js": ["sidebar.js","content.js"],
+      "js": ["sidebar.js","webrtc.js","content.js"],
       "matches": [
-        "https://*.youtube.com/*"
+        "https://*.youtube.com/*",
+        "*://*.netflix.com/*",
+        "*://*.hotstar.com/*"
       ],
       "run_at": "document_idle"
     }

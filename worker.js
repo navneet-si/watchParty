@@ -3,7 +3,7 @@ import { io } from "./socket.io.esm.min.js";
 console.log("Worker started!");
 
 // Connect to server
-const socket = io("http://localhost:3000",{
+const socket = io("http://43.204.236.100:3000",{
     transports: ["websocket"]
 }
 );
@@ -11,7 +11,7 @@ const socket = io("http://localhost:3000",{
 
 socket.on("connect_error", (err) => {
     console.log("CONNECTION ERROR:", err.message); 
-});
+});6
 
 socket.on("disconnect", () => {
     console.log("Socket disconnected"); 
@@ -31,7 +31,33 @@ if (currentRoom) {
 // --- LISTEN TO POPUP ---
 
 chrome.runtime.onMessage.addListener((msg) => {
-    
+
+
+    // --- WEBRTC: OUTGOING SIGNALS (From Page -> To Server) ---
+    if (msg.action === 'sendoffer') {
+        socket.emit('webrtc_offer', {
+            target: msg.target, // The specific user this is for
+            roomId: msg.roomId,
+            offer: msg.offer
+        });
+    }
+
+    if (msg.action === 'sendanswer') {
+        socket.emit('webrtc_answer', {
+            target: msg.target,
+            roomId: msg.roomId,
+            answer: msg.answer
+        });
+    }
+
+    if (msg.action === 'send_ice_candidate') {
+        socket.emit('webrtc_ice_candidate', {
+            target: msg.target,
+            roomId: msg.roomId,
+            candidate: msg.candidate
+        });
+    }
+
     if(msg.action == "room_created"){
             currentRoom = msg.roomId;
             console.log("room created");
@@ -144,4 +170,56 @@ socket.on("receive_action", (data) => {
     });
 });
 
-// 
+// --- WEBRTC: INCOMING SIGNALS (From Server -> To Page) ---
+
+// 1. Someone joined the room. Tell the page to initiate a call!
+socket.on("new_user_joined", (newUserId) => {
+    console.log("Worker: New user joined, telling page to connect:", newUserId);
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+                action: "new_user_joined",
+                userId: newUserId
+            });
+        }
+    });
+});
+
+// 2. Incoming Offer
+socket.on("receive_offer", (data) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+                action: "receive_offer",
+                offer: data.offer,
+                userId: data.callerId // ID of the person calling us
+            });
+        }
+    });
+});
+
+// 3. Incoming Answer
+socket.on("receive_answer", (data) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+                action: "receive_answer",
+                answer: data.answer,
+                userId: data.answererId
+            });
+        }
+    });
+});
+
+// 4. Incoming ICE Candidate (Network Route)
+socket.on("receive_ice_candidate", (data) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+                action: "receive_ice_candidate",
+                candidate: data.candidate,
+                userId: data.senderId
+            });
+        }
+    });
+});
