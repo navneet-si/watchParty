@@ -12,6 +12,46 @@ const rooms = new Map();
 
 io.on("connection", (socket) => {
 
+
+  // 1. ANNOUNCE NEW USERS
+    // Make sure you add this inside your existing 'join_room' event!
+    socket.on("join_room", (roomId) => {
+        socket.join(roomId);
+        console.log(`User ${socket.id} joined room ${roomId}`);
+        
+        // Broadcast to everyone ELSE in the room that this user joined
+        // This triggers them to start generating WebRTC Offers
+        socket.to(roomId).emit("new_user_joined", socket.id); 
+    });
+
+    // 2. THE WEBRTC MAILMAN (Targeted Routing)
+    
+    // Route Offers
+    socket.on("webrtc_offer", (data) => {
+        // We use socket.to(data.target) instead of socket.to(room)
+        // This ensures the highly-encrypted offer ONLY goes to the right person
+        socket.to(data.target).emit("receive_offer", {
+            offer: data.offer,
+            callerId: socket.id // We attach the sender's ID so the receiver knows who called
+        });
+    });
+
+    // Route Answers
+    socket.on("webrtc_answer", (data) => {
+        socket.to(data.target).emit("receive_answer", {
+            answer: data.answer,
+            answererId: socket.id
+        });
+    });
+
+    // Route ICE Candidates
+    socket.on("webrtc_ice_candidate", (data) => {
+        socket.to(data.target).emit("receive_ice_candidate", {
+            candidate: data.candidate,
+            senderId: socket.id
+        });
+    });
+
   socket.on("room_created",({roomId,inviteLink})=>{
       socket.join(roomId);
       rooms.set(roomId,inviteLink);
@@ -51,6 +91,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("pause", (data) => {
+    console.log("paused");
     socket.to(data.roomId).emit("pause");
   });
 
