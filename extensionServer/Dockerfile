@@ -1,26 +1,20 @@
-# bad code has to re do every layer after copy if any of the file changes  
+# 1. Use a lightweight Node.js base image
+FROM node:20-alpine
 
-# FROM node:25
-# WORKDIR /app
-# COPY . .
-# RUN npm install
-# CMD ["node","server.js"]
-
-
-# good image since even after editing the server file the npm packages wont get re downloaded
-
-# FROM node:25
-# WORKDIR /app
-# COPY package*./ ./
-# RUN npm install
-# COPY . .
-# CMD ["node","server.js"]
-
-
-# size to big for the previous image use node:25-slim or node:25-alpine
-FROM node:25-alpine
+# 2. Set the working directory inside the container
 WORKDIR /app
+
+# 3. Copy only package.json and package-lock.json first
 COPY package*.json ./
-RUN npm install
+
+# 4. Install dependencies (only production ones)
+RUN npm install --omit=dev
+
+# 5. Copy the rest of your application code
 COPY . .
-CMD ["node","index.js"]
+
+# 6. Expose the port your server runs on
+EXPOSE 3000
+
+# 7. Start the server
+CMD ["node", "index.js"]
