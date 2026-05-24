@@ -3,7 +3,7 @@ import { io } from "./socket.io.esm.min.js";
 console.log("Worker started!");
 
 // Connect to server
-const socket = io("http://43.204.236.100:3000", {
+const socket = io("http://localhost:3000", {
     transports: ["websocket"]
 });
 
