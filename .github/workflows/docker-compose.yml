@@ -19,7 +19,7 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
-          source: "./*" # <--- CHANGED: Copies the contents, not the root folder itself
+          source: "./*"
           target: "/home/ubuntu/webrtc-app"
 
       - name: 🚀 Execute deployment on AWS
