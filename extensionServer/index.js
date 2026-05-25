@@ -1,129 +1,149 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const { createClient } = require('redis');
+const { createAdapter } = require('@socket.io/redis-adapter');
+
+const redisClient = createClient({
+    url: process.env.REDIS_URL || 'redis://localhost:6379'
+});
 
 const app = express();
 const server = http.createServer(app);
 
-// 1. Configure Socket.io with permissive CORS
-// Since your extension runs on YouTube, Netflix, and Hotstar, 
-// the requests come from different domains. We use "*" to allow them all.
-const io = new Server(server, {
-    cors: {
-        origin: "*", 
-        methods: ["GET", "POST"]
+// In-memory fallback store for room links when Redis is not available
+const roomLinks = new Map();
+
+async function startServer() {
+    let redisAvailable = false;
+
+    try {
+        await redisClient.connect();
+        redisAvailable = true;
+        console.log('Redis Client Connected');
+    } catch (err) {
+        console.error('Redis not available, falling back to in-memory store:', err && err.message ? err.message : err);
     }
-});
 
-// A simple memory store to remember invite links for specific rooms
-const roomLinks = {}; 
-
-io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
-
-    // ==========================================
-    // ROOM MANAGEMENT
-    // ==========================================
-
-    // When the Host clicks "Create Room"
-    socket.on('room_created', (data) => {
-        const { roomId, inviteLink } = data;
-        roomLinks[roomId] = inviteLink; // Save the link in server memory
-        socket.join(roomId);            // Put the host into the socket room
-        console.log(`Room created: ${roomId} by ${socket.id}`);
-    });
-
-    // When a Guest joins via link or enters an ID
-    socket.on('join_room', (roomId) => {
-        socket.join(roomId);
-        console.log(`User ${socket.id} joined room: ${roomId}`);
-        
-        // Tell everyone ELSE in the room that a new person arrived.
-        // This is what triggers the WebRTC 'webConnect()' function on Profile A!
-        socket.to(roomId).emit('new_user_joined', socket.id);
-
-        // If the server remembers the invite link for this room, send it to the guest.
-        // This triggers the 'init_room' listener in your worker.js
-        if (roomLinks[roomId]) {
-            socket.emit('init_room', { roomId, inviteLink: roomLinks[roomId] });
+    // Configure Socket.io with permissive CORS
+    const io = new Server(server, {
+        cors: {
+            origin: '*',
+            methods: ['GET', 'POST']
         }
     });
 
-
-    // ==========================================
-    // VIDEO SYNCHRONIZATION
-    // ==========================================
-
-    socket.on('pause', (data) => {
-        // socket.to() sends the pause command to everyone in the room EXCEPT the person who clicked it
-        socket.to(data.roomId).emit('pause');
-    });
-
-    socket.on('resume', (data) => {
-        socket.to(data.roomId).emit('resume');
-    });
-
-    socket.on('video_action', (data) => {
-        if (data.action === 'seek') {
-            console.log(`Seek action in ${data.roomId} to ${data.time}`);
-            socket.to(data.roomId).emit('receive_action', { time: data.time });
+    // If Redis is available, setup pub/sub adapter for cross-instance messaging
+    if (redisAvailable) {
+        try {
+            const pubClient = redisClient.duplicate();
+            const subClient = redisClient.duplicate();
+            await pubClient.connect();
+            await subClient.connect();
+            io.adapter(createAdapter(pubClient, subClient));
+            console.log('Socket.IO Redis adapter configured');
+        } catch (err) {
+            console.error('Failed to configure Redis adapter, continuing without it:', err);
+            redisAvailable = false; // fall back if adapter setup fails
         }
-    });
+    } else {
+        console.warn('Running without Redis adapter — broadcasts will be local to this process only');
+    }
 
+    io.on('connection', (socket) => {
+        console.log('A user connected:', socket.id);
 
-    // ==========================================
-    // TEXT CHAT
-    // ==========================================
+        // ROOM MANAGEMENT
+        socket.on('room_created', async (data) => {
+            try {
+                const { roomId, inviteLink } = data;
+                if (redisAvailable) {
+                    await redisClient.set(`room:${roomId}:link`, inviteLink);
+                } else {
+                    roomLinks.set(roomId, inviteLink);
+                }
+                socket.join(roomId);
+                console.log(`Room created: ${roomId} by ${socket.id}`);
+            } catch (err) {
+                console.error('Failed to store room link:', err);
+            }
+        });
 
-    socket.on('chat_message', (data) => {
-        // Broadcasts the chat text to the other people in the room
-        socket.to(data.roomId).emit('receive_chat', { message: data.message });
-    });
+        socket.on('join_room', async (roomId) => {
+            try {
+                socket.join(roomId);
+                console.log(`User ${socket.id} joined room: ${roomId}`);
+                socket.to(roomId).emit('new_user_joined', socket.id);
 
+                let inviteLink;
+                if (redisAvailable) {
+                    inviteLink = await redisClient.get(`room:${roomId}:link`);
+                } else {
+                    inviteLink = roomLinks.get(roomId);
+                }
 
-    // ==========================================
-    // WEBRTC SIGNALING (The Post Office)
-    // ==========================================
-    // WebRTC requires the two browsers to trade IPs and security keys before they 
-    // can connect video. This server acts as the middleman (Signaling Server) to trade the data.
+                if (inviteLink) {
+                    socket.emit('init_room', { roomId, inviteLink });
+                }
+            } catch (err) {
+                console.error('Failed during join_room:', err);
+            }
+        });
 
-    // 1. Host sends an Offer -> Forward it to the Guest
-    socket.on('webrtc_offer', (data) => {
-        io.to(data.target).emit('receive_offer', {
-            offer: data.offer,
-            callerId: socket.id // Let the guest know who is calling
+        // VIDEO SYNCHRONIZATION
+        socket.on('pause', (data) => {
+            socket.to(data.roomId).emit('pause');
+        });
+
+        socket.on('resume', (data) => {
+            socket.to(data.roomId).emit('resume');
+        });
+
+        socket.on('video_action', (data) => {
+            if (data.action === 'seek') {
+                console.log(`Seek action in ${data.roomId} to ${data.time}`);
+                socket.to(data.roomId).emit('receive_action', { time: data.time });
+            }
+        });
+
+        // TEXT CHAT
+        socket.on('chat_message', (data) => {
+            socket.to(data.roomId).emit('receive_chat', { message: data.message });
+        });
+
+        // WEBRTC SIGNALING
+        socket.on('webrtc_offer', (data) => {
+            io.to(data.target).emit('receive_offer', {
+                offer: data.offer,
+                callerId: socket.id
+            });
+        });
+
+        socket.on('webrtc_answer', (data) => {
+            io.to(data.target).emit('receive_answer', {
+                answer: data.answer,
+                answererId: socket.id
+            });
+        });
+
+        socket.on('webrtc_ice_candidate', (data) => {
+            io.to(data.target).emit('receive_ice_candidate', {
+                candidate: data.candidate,
+                senderId: socket.id
+            });
+        });
+
+        // CLEANUP
+        socket.on('disconnect', () => {
+            console.log('User disconnected:', socket.id);
         });
     });
 
-    // 2. Guest replies with an Answer -> Forward it back to the Host
-    socket.on('webrtc_answer', (data) => {
-        io.to(data.target).emit('receive_answer', {
-            answer: data.answer,
-            answererId: socket.id
-        });
+    // Start the server
+    const PORT = process.env.PORT || 3000;
+    server.listen(PORT, () => {
+        console.log(`Sync Server is running on port ${PORT}`);
     });
+}
 
-    // 3. Both browsers send ICE Candidates (IP network routes) -> Swap them
-    socket.on('webrtc_ice_candidate', (data) => {
-        io.to(data.target).emit('receive_ice_candidate', {
-            candidate: data.candidate,
-            senderId: socket.id
-        });
-    });
-
-
-    // ==========================================
-    // CLEANUP
-    // ==========================================
-    socket.on('disconnect', () => {
-        console.log('User disconnected:', socket.id);
-        // Socket.io automatically removes disconnected users from their rooms, 
-        // so we don't have to manually delete them!
-    });
-});
-
-// Start the server on port 3000
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Sync Server is running on port ${PORT}`);
-});
+startServer();

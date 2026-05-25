@@ -17,6 +17,7 @@
     "express-validator": "^7.3.1",
     "gzip": "^0.1.0",
     "mongoose": "^9.1.2",
+    "redis": "^5.12.1",
     "socket.io": "^4.8.3"
   }
 }
