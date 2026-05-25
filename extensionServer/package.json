@@ -13,6 +13,7 @@
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
     "express": "^5.2.1",
+    "redis": "^5.12.1",
     "socket.io": "^4.8.3",
     "webrtc": "^1.14.1"
   }
