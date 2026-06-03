@@ -1,0 +1,25 @@
+pipeline{
+
+    agent any
+
+    tools{
+        nodejs 'nodejs'
+    }
+
+    stages{
+        stage('pull code'){
+            steps{
+               git branch: 'master' , url: 'https://github.com/navneet-si/watchParty.git' 
+               echo 'pulled'
+            }
+        }
+        stage('build'){
+            sh 'npm install'
+            echo 'installed'
+        }
+        stage('deploy'){
+            echo 'deployed'
+        }
+    }
+
+}
